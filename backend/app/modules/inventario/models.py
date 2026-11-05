@@ -1,0 +1,110 @@
+import enum
+from datetime import datetime
+from decimal import Decimal
+from typing import TYPE_CHECKING, Optional
+
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    false,
+    func,
+)
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.modules.produccion.models import OrdenTueste
+
+
+class LoteTipo(str, enum.Enum):
+    VERDE = "VERDE"
+    TOSTADO = "TOSTADO"
+
+
+class LoteEstado(str, enum.Enum):
+    CERRADO = "CERRADO"
+    ABIERTO = "ABIERTO"
+
+
+class TipoDeCafe(Base):
+    __tablename__ = "tipo_de_cafe"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organico: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    precio_por_kg_verde: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    variedad: Mapped[str] = mapped_column(String(50), nullable=False)
+    region: Mapped[str] = mapped_column(String(50), nullable=False)
+    pais: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    lotes: Mapped[list["Lote"]] = relationship(back_populates="tipo_de_cafe")
+    blends: Mapped[list["BlendHasTipoDeCafe"]] = relationship(back_populates="tipo_de_cafe")
+
+
+class Blend(Base):
+    __tablename__ = "blend"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    nombre: Mapped[str] = mapped_column(String(50), nullable=False)
+    precio_por_kg_verde: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    descripcion: Mapped[str] = mapped_column(Text, nullable=False)
+
+    tipos_de_cafe: Mapped[list["BlendHasTipoDeCafe"]] = relationship(back_populates="blend")
+    lotes: Mapped[list["Lote"]] = relationship(back_populates="blend")
+
+
+class BlendHasTipoDeCafe(Base):
+    __tablename__ = "blend_has_tipo_de_cafe"
+
+    blend_id: Mapped[int] = mapped_column(ForeignKey("blend.id"), primary_key=True)
+    tipo_de_cafe_id: Mapped[int] = mapped_column(ForeignKey("tipo_de_cafe.id"), primary_key=True)
+    porcentaje: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
+
+    blend: Mapped["Blend"] = relationship(back_populates="tipos_de_cafe")
+    tipo_de_cafe: Mapped["TipoDeCafe"] = relationship(back_populates="blends")
+
+
+class Lote(Base):
+    __tablename__ = "lote"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)  # MEDIUMINT UNSIGNED compatible
+    codigo_lote: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+    fecha_ingreso: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+    tipo: Mapped[LoteTipo] = mapped_column(
+        Enum(LoteTipo, values_callable=lambda e: [m.value for m in e], native_enum=True, name="lote_tipo_enum"),
+        nullable=False,
+    )
+    estado: Mapped[LoteEstado] = mapped_column(
+        Enum(LoteEstado, values_callable=lambda e: [m.value for m in e], native_enum=True, name="lote_estado_enum"),
+        nullable=False,
+    )
+    fecha_vencimiento: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    humedad: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
+    # Tres decimales: la operación de tueste se informa en gramos y necesita
+    # guardar fracciones de kilo sin perder precisión.
+    kg_disponibles: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
+    kg_reales: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
+    ubicacion_fisica: Mapped[str] = mapped_column(String(50), nullable=False)
+    observaciones: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tipo_de_cafe_id: Mapped[Optional[int]] = mapped_column(ForeignKey("tipo_de_cafe.id"), nullable=True, index=True)
+    blend_id: Mapped[Optional[int]] = mapped_column(ForeignKey("blend.id"), nullable=True, index=True)
+    orden_tueste_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("orden_tueste.id"), nullable=True, index=True
+    )
+    # Baja lógica: un lote con historial de tueste no se borra físicamente para
+    # no perder la trazabilidad, pero deja de listarse y de estar disponible.
+    archivado: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+
+    tipo_de_cafe: Mapped[Optional["TipoDeCafe"]] = relationship(back_populates="lotes")
+    blend: Mapped[Optional["Blend"]] = relationship(back_populates="lotes")
+    orden_tueste: Mapped[Optional["OrdenTueste"]] = relationship(back_populates="lotes")
